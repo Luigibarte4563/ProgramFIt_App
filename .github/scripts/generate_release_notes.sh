@@ -27,6 +27,16 @@ CHANGELOG_FILE="CHANGELOG.md"
 TAG_NAME="${1:?Usage: generate_release_notes.sh <tag> [previous_tag]}"
 PREVIOUS_TAG="${2:-}"
 
+# --- Normalize tag names ------------------------------------------------------
+# Accept both '1.0.1' and 'v1.0.1' so callers cannot accidentally break the
+# git resolution or the semantic-version parsing below.
+if [[ "$TAG_NAME" != v* ]]; then
+  TAG_NAME="v${TAG_NAME}"
+fi
+if [[ -n "$PREVIOUS_TAG" && "$PREVIOUS_TAG" != v* ]]; then
+  PREVIOUS_TAG="v${PREVIOUS_TAG}"
+fi
+
 # --- Validate the tag ---------------------------------------------------------
 
 if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then

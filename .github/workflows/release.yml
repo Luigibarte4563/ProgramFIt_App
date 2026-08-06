@@ -1,17 +1,22 @@
 name: Build and Publish Release
 
-# Trigger this workflow only when a version tag is pushed (e.g. v1.0.0).
-# Because we trigger on tags, github.ref_name is ALWAYS a valid tag name,
-# which prevents the "tag name can't be blank" error.
+# Triggers only when a version tag (v*) is pushed. Because we trigger on tags,
+# `github.ref_name` is always a real tag name, which prevents the
+# "tag name can't be blank" error and makes the release tag unambiguous.
 on:
   push:
     tags:
       - "v*"
 
-# Grant the built-in GITHUB_TOKEN permission to push documentation to the
-# main branch and to create/update the GitHub Release. No custom secrets needed.
+# The built-in GITHUB_TOKEN can push documentation to main and create/update
+# GitHub Releases. No Personal Access Token or custom secret is required.
 permissions:
   contents: write
+
+concurrency:
+  # Prevent two release runs for the same tag from racing (e.g. docs commits).
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -19,18 +24,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Check out the repository at the pushed tag, with full history so we
-      #    can compute changelogs and resolve the previous release tag.
+      # ---------------------------------------------------------------------
+      # 1. Checkout
+      # ---------------------------------------------------------------------
+      # fetch-depth: 0 pulls the full history and all tags so we can compute
+      # commit ranges (previous tag -> current tag) for the changelog and so
+      # the previous-release detection below works on first releases too.
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      # 2. Extract the version from pubspec.yaml.
-      #    Flutter stores it as "<version name>+<build number>", e.g. 1.0.0+1.
-      #    Git tags and GitHub Releases use ONLY the version name (v1.0.0);
-      #    the build number (+1) is ignored there but Flutter keeps using the
-      #    full string (1.0.0+1) as the Android versionName/versionCode.
+      # ---------------------------------------------------------------------
+      # 2. Extract version from pubspec.yaml
+      # ---------------------------------------------------------------------
+      # Flutter stores the version as "<version name>+<build number>", e.g.
+      # 1.0.1+2. Git tags and GitHub Releases use ONLY the version name
+      # (v1.0.1); the build number (+2) maps to the Android versionCode and is
+      # never part of a tag.
       - name: Extract version from pubspec.yaml
         id: pubspec
         run: |
@@ -42,58 +53,40 @@ jobs:
           VERSION_NAME="${PUBSPEC_VERSION%%+*}"
           BUILD_NUMBER="${PUBSPEC_VERSION##*+}"
           if [[ "$BUILD_NUMBER" == "$PUBSPEC_VERSION" ]]; then
-            BUILD_NUMBER=""
-            echo "::warning::pubspec.yaml has no build number (+N); Android versionCode defaults to 1."
+            BUILD_NUMBER="1"
+            echo "::warning::pubspec.yaml has no build number (+N); defaulting build number to 1."
+          fi
+          # Sanity-check the semantic version name (X.Y.Z).
+          if ! printf '%s' "$VERSION_NAME" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Version name '$VERSION_NAME' is not a valid semantic version (expected X.Y.Z)."
+            exit 1
           fi
           echo "pubspec version: $PUBSPEC_VERSION"
           echo "version name:    $VERSION_NAME"
-          echo "build number:    ${BUILD_NUMBER:-n/a}"
+          echo "build number:    $BUILD_NUMBER"
+          echo "expected tag:    v${VERSION_NAME}"
           echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "full_version=$PUBSPEC_VERSION" >> "$GITHUB_OUTPUT"
 
-      # 3. Set up the latest stable Flutter SDK (cached for faster runs).
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      # 4. Install project dependencies.
-      - name: Install dependencies
-        run: flutter pub get
-
-      # 5. Build the release APK.
-      #    The APK is built with the full version from pubspec.yaml (e.g.
-      #    1.0.0+1) — no --build-name/--build-number overrides are passed.
-      #    Output path (Flutter default):
-      #      build/app/outputs/flutter-apk/app-release.apk
-      - name: Build release APK
-        run: flutter build apk --release
-
-      # 6. Validate that the APK actually exists before uploading, so we fail
-      #    fast with a clear message if the output path ever changes.
-      - name: Verify APK exists
-        run: |
-          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "::error::APK not found at $APK_PATH"
-            exit 1
-          fi
-          ls -lh "$APK_PATH"
-
-      # 7. Validate that the tag that triggered this workflow exists and that
-      #    it matches the version name in pubspec.yaml.
-      #    This enforces two rules:
-      #      - The tag must NOT include the build number (v1.0.0, never v1.0.0+1).
-      #      - The tag must match the app version, so the release always
-      #        corresponds to what pubspec.yaml declares.
+      # ---------------------------------------------------------------------
+      # 3. Validate the pushed tag (fail fast, before spending CI time)
+      # ---------------------------------------------------------------------
+      # Enforces two rules with clear, actionable error messages:
+      #   - The triggering tag must actually exist in the repository.
+      #   - The tag must equal v<version name from pubspec.yaml>.
+      #   - The tag must NOT include the build number (v1.0.1, never v1.0.1+2).
       - name: Validate Git tag against pubspec.yaml
         env:
           TAG_NAME: ${{ github.ref_name }}
           VERSION_NAME: ${{ steps.pubspec.outputs.version_name }}
         run: |
+          if [[ -z "$TAG_NAME" ]]; then
+            echo "::error::No tag was pushed. Create and push a tag like 'v${VERSION_NAME}' to trigger a release."
+            exit 1
+          fi
           if ! git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
-            echo "::error::Git tag '$TAG_NAME' does not exist."
+            echo "::error::Git tag '$TAG_NAME' does not exist in this repository."
             exit 1
           fi
           EXPECTED_TAG="v${VERSION_NAME}"
@@ -105,24 +98,92 @@ jobs:
           fi
           echo "Tag '$TAG_NAME' matches pubspec.yaml version name '$VERSION_NAME' -> commit $(git rev-parse --short "$TAG_NAME")"
 
-      # 8. Generate CHANGELOG.md entries and docs/releases/v<version>.md
-      #    from the commits in this release.
+      # ---------------------------------------------------------------------
+      # 4. Detect the previous release tag (safe for the first release)
+      # ---------------------------------------------------------------------
+      # Finds the highest other version tag to build the commit range
+      # "previous tag .. current tag". If no other tag exists this is the
+      # initial release and PREVIOUS_TAG is left empty — the release-notes
+      # script then generates notes from the first commit instead of failing.
+      - name: Detect previous release tag
+        id: previous
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          PREVIOUS_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            echo "Previous release tag: $PREVIOUS_TAG"
+            echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "No previous release tag found — treating this as the initial release."
+            echo "previous_tag=" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------------------------------------------------------------------
+      # 5. Set up the Flutter SDK
+      # ---------------------------------------------------------------------
+      # Latest stable Flutter channel, cached for faster subsequent runs.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # ---------------------------------------------------------------------
+      # 6. Install dependencies
+      # ---------------------------------------------------------------------
+      - name: Install dependencies
+        run: flutter pub get
+
+      # ---------------------------------------------------------------------
+      # 7. Build the release APK
+      # ---------------------------------------------------------------------
+      # Built with the full version from pubspec.yaml (1.0.1+2), so the
+      # Android versionName = 1.0.1 and versionCode = 2 come straight from
+      # pubspec.yaml. No --build-name/--build-number overrides are passed.
+      # Output path (Flutter default):
+      #   build/app/outputs/flutter-apk/app-release.apk
+      - name: Build release APK
+        run: flutter build apk --release
+
+      # ---------------------------------------------------------------------
+      # 8. Verify the APK exists before uploading
+      # ---------------------------------------------------------------------
+      # Fail fast with a clear message if the output path ever changes.
+      - name: Verify APK exists
+        run: |
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          if [[ ! -f "$APK_PATH" ]]; then
+            echo "::error::APK not found at $APK_PATH"
+            exit 1
+          fi
+          ls -lh "$APK_PATH"
+
+      # ---------------------------------------------------------------------
+      # 9. Generate release notes
+      # ---------------------------------------------------------------------
+      # Writes docs/releases/<tag>.md and prepends a Keep-a-Changelog entry to
+      # CHANGELOG.md. The script handles both cases:
+      #   - A previous tag exists  -> commits between previous tag and current.
+      #   - No previous tag        -> all commits from the start of the repo
+      #                               (initial release).
+      # We pass the REAL tag (v1.0.1, with the "v") so git can resolve it.
       - name: Generate release documentation
         env:
-          TAG_NAME: ${{ steps.pubspec.outputs.version_name }}
+          TAG_NAME: ${{ github.ref_name }}
+          PREVIOUS_TAG: ${{ steps.previous.outputs.previous_tag }}
         run: |
-          # Find the nearest previous version tag to build the commit range.
-          PREVIOUS_TAG="$(git tag --sort=-v:refname | grep -v "^${TAG_NAME}$" | head -n 1 || true)"
           bash .github/scripts/generate_release_notes.sh "${TAG_NAME}" "${PREVIOUS_TAG}"
 
-      # 9. Commit and push the generated documentation to the main branch.
-      #    Notes:
-      #      - Commits pushed via GITHUB_TOKEN do NOT re-trigger this workflow
-      #        (avoids infinite loops).
-      #      - The docs commit is rebased onto the latest main before pushing.
+      # ---------------------------------------------------------------------
+      # 10. Commit and push the release documentation to main
+      # ---------------------------------------------------------------------
+      # Commits pushed with GITHUB_TOKEN do NOT re-trigger this workflow
+      # (avoids infinite loops). The commit is rebased onto the latest main
+      # before pushing so concurrent activity does not break the push.
       - name: Commit and push release documentation
         env:
-          TAG_NAME: ${{ steps.pubspec.outputs.version_name }}
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -131,22 +192,26 @@ jobs:
             echo "No documentation changes to commit."
             exit 0
           fi
-          git commit -m "docs: add release notes for v${TAG_NAME}"
+          git commit -m "docs: add release notes for ${TAG_NAME}"
           git fetch origin main
           git rebase origin/main
           git push origin HEAD:main
 
-      # 10. Create the GitHub Release (or update it if one already exists for
-      #     this tag). softprops/action-gh-release@v2 creates a new release when
-      #     none exists for the tag and updates the existing one otherwise.
-      #     The tag name is derived from the version name only (v1.0.0), so the
-      #     build number is never part of a release tag.
+      # ---------------------------------------------------------------------
+      # 11. Create or update the GitHub Release
+      # ---------------------------------------------------------------------
+      # softprops/action-gh-release@v2 creates a new release when none exists
+      # for the tag and UPDATES the existing one otherwise, so re-running is
+      # safe. The release carries:
+      #   - the release notes (body from docs/releases/<tag>.md)
+      #   - the signed release APK as a downloadable asset
+      # tag_name always comes from github.ref_name, so it is never blank.
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.pubspec.outputs.version_name }}
-          name: Release v${{ steps.pubspec.outputs.version_name }}
-          body_path: docs/releases/v${{ steps.pubspec.outputs.version_name }}.md
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body_path: docs/releases/${{ github.ref_name }}.md
           files: build/app/outputs/flutter-apk/app-release.apk
           fail_on_unmatched_files: true
           draft: false
