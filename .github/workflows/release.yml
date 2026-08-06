@@ -1,0 +1,71 @@
+name: Build and Publish Release
+
+# Trigger the workflow only when a version tag (e.g. v1.0.0) is pushed.
+# Because we trigger on tags, github.ref_name is always a tag name,
+# which prevents the "tag name can't be blank" error.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Allow this workflow to create a GitHub Release and upload assets
+# using the built-in GITHUB_TOKEN (no custom secrets required).
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build APK and Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Check out the repository source code at the pushed tag.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Set up the latest stable Flutter SDK.
+      #    subosito/flutter-action@v2 is the current recommended action,
+      #    and enables the action cache for faster future runs.
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # 3. Install project dependencies (Flutter packages).
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 4. Build the release APK.
+      #    Flutter writes the output to build/app/outputs/flutter-apk/app-release.apk.
+      - name: Build release APK
+        run: flutter build apk --release
+
+      # 5. Validate that the APK actually exists before uploading.
+      #    This fails fast with a clear error if the path ever changes.
+      - name: Verify APK exists
+        run: |
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::APK not found at $APK_PATH"
+            exit 1
+          fi
+          ls -lh "$APK_PATH"
+
+      # 6. Create a GitHub Release using the pushed tag and upload the APK.
+      #    softprops/action-gh-release@v2 requires tag_name, which we take
+      #    from github.ref_name (e.g. "v1.0.0" when pushing the v1.0.0 tag).
+      #    This prevents the "tag name can't be blank" error.
+      - name: Create Release and Upload APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            ## ProgramFit ${{ github.ref_name }}
+
+            Download **app-release.apk** from the **Assets** section below.
+
+            For installation help, see the [README](https://github.com/Luigibarte4563/ProgramFIt_App#readme).
+          files: build/app/outputs/flutter-apk/app-release.apk
+          generate_release_notes: true
