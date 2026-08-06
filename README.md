@@ -52,8 +52,9 @@ lib/
 │   ├── assessment_screen.dart         # Two-phase assessment flow
 │   ├── results_screen.dart            # Top-3 recommendations + breakdown
 │   └── widgets/
-│       ├── app_navbar.dart            # App navigation bar
-│       ├── app_shell.dart             # Shell route (navbar + mobile menu)
+│       ├── app_bottom_nav.dart        # Persistent Material 3 bottom navigation
+│       ├── app_header.dart            # App brand header (below the status bar)
+│       ├── app_shell.dart             # Shell route (header + bottom nav + page)
 │       ├── confirmation_card.dart     # Confirmation question card
 │       ├── confirmation_scale.dart    # Yes / Somewhat / No scale
 │       ├── neo_dialog.dart            # Neo-brutalist dialog

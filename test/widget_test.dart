@@ -150,6 +150,21 @@ void main() {
 
     expect(find.text('Welcome to ProgramFit'), findsOneWidget);
     expect(find.text('Start Assessment'), findsOneWidget);
-    expect(find.byType(NavigationBar), findsNothing);
+    expect(find.byType(NavigationBar), findsOneWidget);
+  });
+
+  testWidgets('bottom navigation bar highlights the selected destination',
+      (tester) async {
+    await tester.pumpWidget(const ProgramFitApp());
+
+    final navigationBar = tester.widget<NavigationBar>(find.byType(NavigationBar));
+    expect(navigationBar.selectedIndex, 0);
+
+    await tester.tap(find.text('Results'));
+    await tester.pumpAndSettle();
+
+    final updatedBar =
+        tester.widget<NavigationBar>(find.byType(NavigationBar));
+    expect(updatedBar.selectedIndex, 2);
   });
 }

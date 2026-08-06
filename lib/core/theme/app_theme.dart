@@ -40,5 +40,24 @@ ThemeData buildAppTheme() {
       cursorColor: AppColors.brandPrimary,
     ),
     splashFactory: InkSparkle.splashFactory,
+    navigationBarTheme: NavigationBarThemeData(
+      backgroundColor: AppColors.bgCard,
+      indicatorColor: AppColors.brandPrimary.withValues(alpha: 0.16),
+      height: 72,
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return IconThemeData(
+          color: selected ? AppColors.brandPrimary : AppColors.textSecondary,
+        );
+      }),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        final selected = states.contains(WidgetState.selected);
+        return TextStyle(
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+          color: selected ? AppColors.brandPrimary : AppColors.textSecondary,
+        );
+      }),
+    ),
   );
 }

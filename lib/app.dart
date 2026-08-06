@@ -13,17 +13,30 @@ GoRouter _createRouter() {
   return GoRouter(
     initialLocation: '/',
     routes: [
-      ShellRoute(
-        builder: (context, state, child) => AppShell(child: child),
-        routes: [
-          GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
-          GoRoute(
-            path: '/assessment',
-            builder: (_, _) => const AssessmentScreen(),
+      StatefulShellRoute.indexedStack(
+        builder: (context, state, navigationShell) =>
+            AppShell(navigationShell: navigationShell),
+        branches: [
+          StatefulShellBranch(
+            routes: [
+              GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+            ],
           ),
-          GoRoute(
-            path: '/results',
-            builder: (_, _) => const ResultsScreen(),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/assessment',
+                builder: (_, _) => const AssessmentScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/results',
+                builder: (_, _) => const ResultsScreen(),
+              ),
+            ],
           ),
         ],
       ),
