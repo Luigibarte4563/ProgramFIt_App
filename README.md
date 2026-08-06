@@ -203,15 +203,22 @@ Your data will be preserved as long as the application ID remains the same.
 
 Want an older build? Browse the **[Releases](https://github.com/Luigibarte4563/ProgramFIt_App/releases)** page to download any previous version.
 
+- **[CHANGELOG.md](CHANGELOG.md)** — full change history, following [Keep a Changelog](https://keepachangelog.com/).
+- **Release notes** — detailed notes per version, stored in [`docs/releases/`](docs/releases/).
+
 | Version | Build | Release Notes |
 |---------|-------|---------------|
-| 1.0.0   | +1    | Initial release. Offline MVP: two-phase interest assessment, Top-3 program recommendations with fit badges, local progress persistence, and a neo-brutalist Material 3 UI across web, Android, and iOS. |
+| [1.0.0](https://github.com/Luigibarte4563/ProgramFIt_App/releases/tag/v1.0.0) | +1 | [Initial release](docs/releases/v1.0.0.md). Offline MVP: two-phase interest assessment, Top-3 program recommendations with fit badges, local progress persistence, and a neo-brutalist Material 3 UI across web, Android, and iOS. |
 
 ### 👨‍💻 For Developers
 
 Releases are automatically generated using **GitHub Actions**. To cut a new release, tag the version and push it:
 
 ```bash
+git add .
+git commit -m "Release v1.0.0"
+git push origin main
+
 git tag v1.0.0
 git push origin v1.0.0
 ```
@@ -219,7 +226,11 @@ git push origin v1.0.0
 The workflow automatically:
 
 - Builds the Flutter release APK.
-- Creates a GitHub Release.
+- Generates a **[CHANGELOG.md](CHANGELOG.md)** entry and release notes in **[`docs/releases/`](docs/releases/)**.
+- Commits and pushes the generated documentation.
+- Creates (or updates) a GitHub Release.
 - Uploads **`app-release.apk`** as a Release Asset.
 - Makes the APK available for download from the Releases page.
 - Requires no manual APK upload.
+
+For details, see [`.github/workflows/release.yml`](.github/workflows/release.yml).
